@@ -27,11 +27,13 @@ Restart the bot. It installs the plugin from GitHub on start-up.
 
 All options are optional and go in the bot's `config.ini`.
 
-| Option | Description |
-| ------ | ----------- |
-| `dataRequestsRoleId` | Role id (repeat as `dataRequestsRoleId[] = ...` for several) that members need to use the commands |
-| `dataRequestsChannelId` | Channel id (or several) the commands are restricted to |
-| `dataRequestsLogChannelId` | Channel that gets a log of each action, e.g. `Data request: User <@id> data requested.` |
+
+| Option                     | Description                                                                                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataRequestsRoleId`       | Role id (repeat as `dataRequestsRoleId[] = ...` for several) that members need to use the commands                                                                                                 |
+| `dataRequestsChannelId`    | Channel id (or several) the commands are restricted to. Populating this config prevents the bot from functioning in threads. Ideal if you'd prefer data requests to be handled by a specific team. |
+| `dataRequestsLogChannelId` | Channel that gets a log of each action, e.g. `Data request: User <@id> data requested.`                                                                                                            |
+
 
 When both a role and a channel are set, both must match.
 
@@ -41,5 +43,7 @@ When both a role and a channel are set, both must match.
 - The "Modmail thread #N with ... was closed" messages the bot posted in `logChannelId` are not deleted. They still show the user's name and id, but the log links in them stop working once the thread's data is deleted.
 
 ## Tools Used
+
 - AI tooling was leveraged for the development of this plugin. 
 - [mattpocock/skills](https://github.com/mattpocock/skills) `grill-with-docs`: questions each design decision one at a time before coding, records the answers as the ADRs in `docs/adr/` and the terms in `GLOSSARY.md`. Helps track reasoning alongside code.
+
