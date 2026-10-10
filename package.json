@@ -1,0 +1,8 @@
+{
+  "name": "DataRequests",
+  "version": "1.0.0",
+  "description": "Modmail Bot plugin: export (!getuserdata), send (!senduserdata) and delete (!deleteuserdata) a user's modmail data",
+  "main": "index.js",
+  "repository": "github:FM-17/DataRequests",
+  "license": "MIT"
+}
