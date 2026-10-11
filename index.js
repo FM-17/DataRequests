@@ -211,8 +211,10 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     // Tell the user and close their open threads first. Closing saves the thread's log, so the files
     // to delete are only collected afterwards. This may delete the channel this command was run in.
     let notified = true;
+    let failedCloses = 0;
     for (const row of openThreads) {
       const thread = await threads.findById(row.id);
+      if (! thread) continue;
 
       try {
         await thread.sendSystemMessageToUser(USER_DELETION_NOTICE);
@@ -226,7 +228,12 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
         await sleep(CLOSE_DELAY_SECONDS * 1000);
       }
 
-      await thread.close(true);
+      try {
+        await thread.close(true);
+      } catch (err) {
+        failedCloses++;
+        console.error(`[DataRequests] Could not close thread ${row.id}: ${err.message}`);
+      }
     }
 
     const finalCounts = await countUserData(userId);
@@ -245,12 +252,17 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
     let text = `Deleted ${plural(finalCounts.threadCount, "thread")}, ${plural(finalCounts.messageCount, "message")}, `
       + `${plural(finalCounts.noteCount, "note")} and ${plural(deletedFiles, "file")} for <@${userId}>.${keptText}`;
-    if (openThreads.length) text += ` Closed ${plural(openThreads.length, "open thread")}.`;
+    const closed = openThreads.length - failedCloses;
+    if (closed) text += ` Closed ${plural(closed, "open thread")}.`;
+    if (failedCloses) text += ` ${plural(failedCloses, "open thread")} could not be closed cleanly (their data was still deleted), see the bot console.`;
     if (! notified) text += " **The user could not be notified by DM.**";
     if (failedFiles) text += ` ${plural(failedFiles, "file")} could not be deleted, see the bot console.`;
 
     // If the command was run in a thread that has now been closed, its channel is gone
     await msg.channel.createMessage(text).catch(() => console.log(`[DataRequests] ${text}`));
-    await logAction(`Data deletion: User <@${userId}> data deleted.`);
+    const problems = [];
+    if (failedFiles) problems.push(`${plural(failedFiles, "file")} could not be deleted`);
+    if (failedCloses) problems.push(`${plural(failedCloses, "thread")} could not be closed cleanly`);
+    await logAction(`Data deletion: User <@${userId}> data deleted${problems.length ? ` (${problems.join(", ")})` : "."}`);
   });
 };
