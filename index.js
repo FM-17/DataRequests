@@ -1,13 +1,5 @@
-const fs = require("fs");
-const path = require("path");
 const createExportTracking = require("./lib/export-tracking");
-
-// Values of the bot's THREAD_STATUS constants (src/data/constants.js)
-const THREAD_STATUS_CLOSED = 2;
-
-// Matches the bot's local attachment URLs: .../attachments/<attachmentId>/<filename>
-// (Discord CDN URLs have two numeric segments, so they don't match.)
-const LOCAL_ATTACHMENT_URL = /\/attachments\/(\d+)\/[^/]+$/;
+const createUserData = require("./lib/user-data");
 
 const USER_DELETION_NOTICE = "Your data has been deleted at your request. "
   + "This includes this conversation, which will now be closed. "
@@ -19,24 +11,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const USER_DATA_MESSAGE = "The requested user data can be found below:";
 
-const isInside = (dir, filePath) => {
-  const rel = path.relative(path.resolve(dir), path.resolve(filePath));
-  return rel !== "" && ! rel.startsWith("..") && ! path.isAbsolute(rel);
-};
-
-// Returns undefined when the text can't be parsed, so callers can tell that apart from an empty value
-const safeParse = (value, label) => {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch (err) {
-    console.warn(`[DataRequests] Skipping unparseable ${label}: ${err.message}`);
-    return undefined;
-  }
-};
-
 const toList = value => (value == null ? [] : [].concat(value).map(String));
-const toInt = value => parseInt(value, 10) || 0;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 module.exports = function({ bot, knex, config, commands, threads, formats }) {
@@ -55,6 +30,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   };
 
   const exportTracking = createExportTracking({ bot, knex, config });
+  const userData = createUserData({ knex, config });
 
   const logAction = async text => {
     if (! logChannelId) return;
@@ -99,10 +75,6 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }, { options });
   };
 
-  // All of the user's threads, whatever their status. `db` is knex or a transaction.
-  const userThreads = (db, userId) => db("threads").where("user_id", userId);
-  const userThreadIds = (db, userId) => userThreads(db, userId).select("id");
-
   // The user is allowed to see staff replies, but not who sent the anonymous ones.
   // The log already prints "(Anonymous) <role>:" for these, so only the sender name needs a neutral value.
   // Works on the in-memory copies fetched for this export only, nothing is written back to the database.
@@ -121,13 +93,13 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
   // The user's data as the text of a `loglink -s` style log: only messages to and from the user, no mod chatter
   const buildUserData = async userId => {
-    const rows = await userThreads(knex, userId).orderBy("created_at", "ASC").select("id");
+    const threadIds = await userData.threadIds(userId);
 
     const logs = [];
-    for (const row of rows) {
-      const thread = await threads.findById(row.id);
+    for (const threadId of threadIds) {
+      const thread = await threads.findById(threadId);
       if (! thread) {
-        console.warn(`[DataRequests] Thread ${row.id} not found, skipping`);
+        console.warn(`[DataRequests] Thread ${threadId} not found, skipping`);
         continue;
       }
       const threadMessages = await thread.getThreadMessages();
@@ -189,91 +161,10 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     await logAction(`Data sent: User <@${userId}> data sent.`);
   });
 
-  const getAttachmentDir = () => config.attachmentDir
-    || path.resolve(path.dirname(require.main.filename), "..", "attachments");
-
-  // Log files only exist with logStorage = "attachment". The bot writes them to logOptions.attachmentDirectory
-  // (default "logs", relative to the working directory). `config.logDir` is only for legacy migration.
-  const getLogDir = () => path.resolve(
-    process.cwd(),
-    (config.logOptions && config.logOptions.attachmentDirectory) || "logs",
-  );
-
-  const deleteFile = async filePath => {
-    try {
-      await fs.promises.unlink(filePath);
-      return "deleted";
-    } catch (err) {
-      if (err.code === "ENOENT") return "missing";
-      console.error(`[DataRequests] Could not delete ${filePath}: ${err.message}`);
-      return "failed";
-    }
-  };
-
-  // Files on disk that belong to the user's threads: saved log files and local attachments.
-  // `skipped` counts files that may exist but were left alone (unreadable records or unsafe paths).
-  const findFilesToDelete = async userId => {
-    const files = [];
-    let skipped = 0;
-
-    const threadRows = await userThreads(knex, userId).select("log_storage_data");
-    for (const row of threadRows) {
-      const data = safeParse(row.log_storage_data, "log_storage_data");
-      if (data === undefined) {
-        skipped++;
-      } else if (data && typeof data.fullPath === "string") {
-        if (isInside(getLogDir(), data.fullPath)) {
-          files.push(data.fullPath);
-        } else {
-          skipped++;
-          console.warn(`[DataRequests] Not deleting log file outside the log directory: ${data.fullPath}`);
-        }
-      }
-    }
-
-    if (config.attachmentStorage === "local") {
-      const messageRows = await knex("thread_messages")
-        .whereIn("thread_id", userThreadIds(knex, userId))
-        .whereNotNull("attachments")
-        .select("attachments");
-
-      for (const row of messageRows) {
-        const urls = safeParse(row.attachments, "attachments");
-        if (! Array.isArray(urls)) {
-          skipped++;
-          continue;
-        }
-        for (const url of urls) {
-          if (typeof url !== "string") continue;
-          const match = url.split(/[?#]/)[0].match(LOCAL_ATTACHMENT_URL);
-          if (! match) continue;
-          const filePath = path.join(getAttachmentDir(), match[1]);
-          if (isInside(getAttachmentDir(), filePath)) {
-            files.push(filePath);
-          } else {
-            skipped++;
-            console.warn(`[DataRequests] Not deleting attachment outside the attachment directory: ${filePath}`);
-          }
-        }
-      }
-    }
-
-    return { files, skipped };
-  };
-
-  const countUserData = async userId => ({
-    threadCount: toInt((await userThreads(knex, userId).count({ c: "*" }).first()).c),
-    messageCount: toInt((await knex("thread_messages")
-      .whereIn("thread_id", userThreadIds(knex, userId))
-      .count({ c: "*" })
-      .first()).c),
-    noteCount: toInt((await knex("notes").where("user_id", userId).count({ c: "*" }).first()).c),
-  });
-
   // !deleteuserdata [userId] [--confirm]
   // Without --confirm, only reports what would be deleted
   addCommand("deleteuserdata", [{ name: "confirm", isSwitch: true }], async (msg, userId, args) => {
-    const counts = await countUserData(userId);
+    const counts = await userData.counts(userId);
     const exportCount = await exportTracking.count(userId);
 
     if (counts.threadCount === 0 && counts.noteCount === 0 && exportCount.count === 0) {
@@ -283,12 +174,10 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       return;
     }
 
-    const openThreads = await userThreads(knex, userId)
-      .whereNot("status", THREAD_STATUS_CLOSED)
-      .select("id", "thread_number", "channel_id");
-    const blockRecord = await knex("blocked_users").where("user_id", userId).first();
+    const openThreads = await userData.openThreads(userId);
+    const hasBlockRecord = await userData.hasBlockRecord(userId);
 
-    const keptText = blockRecord ? " The block record is kept." : "";
+    const keptText = hasBlockRecord ? " The block record is kept." : "";
 
     if (! args.confirm) {
       let text = `Would delete ${plural(counts.threadCount, "thread")}, ${plural(counts.messageCount, "message")} `
@@ -340,23 +229,16 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       }
     }
 
-    const finalCounts = await countUserData(userId);
-    const { files, skipped: skippedFiles } = await findFilesToDelete(userId);
+    const finalCounts = await userData.counts(userId);
+    const { files, skipped: skippedFiles } = await userData.findFiles(userId);
 
-    await knex.transaction(async trx => {
-      await trx("thread_messages").whereIn("thread_id", userThreadIds(trx, userId)).delete();
-      await userThreads(trx, userId).delete();
-      await trx("notes").where("user_id", userId).delete();
-    });
+    await userData.removeRows(userId);
 
     // Reads the exports again: the plugin may have recorded more since the count above
     const exportResult = await exportTracking.deleteAll(userId);
     const exportsUnchecked = exportCount.unchecked || exportResult.unchecked;
 
-    const results = [];
-    for (const file of files) results.push(await deleteFile(file));
-    const deletedFiles = results.filter(r => r === "deleted").length;
-    const failedFiles = results.filter(r => r === "failed").length;
+    const { deleted: deletedFiles, failed: failedFiles } = await userData.removeFiles(files);
 
     let text = `Deleted ${plural(finalCounts.threadCount, "thread")}, ${plural(finalCounts.messageCount, "message")}, `
       + `${plural(finalCounts.noteCount, "note")} and ${plural(deletedFiles, "file")} for <@${userId}>.${keptText}`;
