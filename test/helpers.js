@@ -79,7 +79,7 @@ function createFakeKnex(initialTables = {}, { failReads = [], failDeletes = [], 
 const notFound = code => Object.assign(new Error("Unknown"), { code });
 
 // Loads the plugin against fakes and returns the registered commands plus everything to inspect
-function setup({ tables = {}, knexOptions, config = {}, bot = {}, threadsById = {}, format } = {}) {
+function setup({ tables = {}, knexOptions, config = {}, bot = {}, threadsById = {}, format, wait } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "datarequests-"));
   const logDir = path.join(dir, "logs");
   const attachmentDir = path.join(dir, "attachments");
@@ -98,6 +98,7 @@ function setup({ tables = {}, knexOptions, config = {}, bot = {}, threadsById = 
   };
 
   plugin({
+    wait,
     bot: fullBot,
     knex,
     config: {

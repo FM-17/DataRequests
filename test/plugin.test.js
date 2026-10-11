@@ -248,6 +248,50 @@ test("deleteuserdata reports threads it closed", withEnv({
   assert.match(lastReply(env), /Closed 1 open thread/);
 }));
 
+test("deleteuserdata says when the user could not be notified", withEnv({
+  tables: { threads: [{ id: "t1", user_id: USER, status: 1, thread_number: 7, channel_id: "chan7" }] },
+  threadsById: { t1: { sendSystemMessageToUser: async () => { throw new Error("dms closed"); }, close: async () => {} } },
+}, async env => {
+  await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+  assert.match(lastReply(env), /Closed 1 open thread/);
+  assert.match(lastReply(env), /The user could not be notified by DM\./);
+}));
+
+test("deleteuserdata run inside the thread being closed posts a notice and waits first", async () => {
+  const waits = [];
+  const events = [];
+  const env = setup({
+    tables: { threads: [{ id: "t1", user_id: USER, status: 1, thread_number: 7, channel_id: "ops-channel" }] },
+    threadsById: { t1: { sendSystemMessageToUser: async () => {}, close: async () => { events.push("closed"); } } },
+    wait: async seconds => { waits.push(seconds); events.push("waited"); },
+  });
+  try {
+    await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+    assert.deepEqual(waits, [20]);
+    assert.deepEqual(events, ["waited", "closed"]);
+    assert.equal(env.replies[0].content, "This thread will be closed and deleted in 20 seconds.");
+  } finally {
+    env.cleanup();
+  }
+});
+
+const logged = [];
+test("deleteuserdata lists the problems in the log channel", withEnv({
+  tables: { threads: [{ id: "t1", user_id: USER, status: 1, thread_number: 7, channel_id: "chan7", log_storage_data: null }] },
+  threadsById: { t1: { sendSystemMessageToUser: async () => {}, close: async () => { throw new Error("boom"); } } },
+  config: { dataRequestsLogChannelId: "log1" },
+  bot: { createMessage: async (channelId, text) => { logged.push({ channelId, text }); return {}; } },
+}, async env => {
+  await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+  assert.deepEqual(logged, [{
+    channelId: "log1",
+    text: `Data deletion: User <@${USER}> data deleted (1 thread could not be closed cleanly)`,
+  }]);
+}));
+
 test("deleteuserdata does not collect attachments unless attachment storage is local", withEnv({
   config: { attachmentStorage: "discord" },
 }, async env => {
