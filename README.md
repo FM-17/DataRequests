@@ -14,7 +14,7 @@ Restart the bot. It installs the plugin from GitHub on start-up.
 
 ## Commands
 
-`<userId>` can be an id or a mention. It is optional: when a command is run in a ticket thread without one, it uses the ticket's user.
+`<userId>` can be an id or a mention. It is optional: when a command is run in a modmail thread without one, it uses the thread's user.
 
 - `!getuserdata [userId]`: posts a `.txt` file with the user's modmail threads. It has the same content as `!loglink -s`: only messages to and from the user.
 - `!senduserdata [userId]`: sends that same file to the user by DM. 

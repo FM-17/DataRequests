@@ -46,7 +46,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
   };
 
-  // All commands take an optional user id. In a ticket thread it defaults to the ticket's user.
+  // All commands take an optional user id. In a modmail thread it defaults to the thread's user.
   const addCommand = (name, options, run) => {
     commands.addInboxServerCommand(name, "[userId:userId]", async (msg, args, thread) => {
       if (! isAllowed(msg)) return;
@@ -54,7 +54,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       try {
         const userId = args.userId || (thread && thread.user_id);
         if (! userId) {
-          await msg.channel.createMessage(`⚠ Specify a user id, or run ${config.prefix}${name} in a ticket thread`);
+          await msg.channel.createMessage(`⚠ Specify a user id, or run ${config.prefix}${name} in a modmail thread`);
           return;
         }
 
@@ -179,7 +179,6 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   // Without --confirm, only reports what would be deleted
   addCommand("deleteuserdata", [{ name: "confirm", isSwitch: true }], async (msg, userId, args) => {
     const counts = await countUserData(userId);
-
     if (counts.threadCount === 0 && counts.noteCount === 0) {
       await msg.channel.createMessage(`There is no modmail data or notes to delete for <@${userId}>`);
       return;
