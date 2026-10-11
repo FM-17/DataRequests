@@ -1,20 +1,13 @@
 const createExportTracking = require("./lib/export-tracking");
 const createUserData = require("./lib/user-data");
-
-const USER_DELETION_NOTICE = "Your data has been deleted at your request. "
-  + "This includes this conversation, which will now be closed. "
-  + "You can send a new message at any time to start a new conversation.";
-
-// When the command is run inside a thread that is about to be closed, wait so the operator can read the notice
-const CLOSE_DELAY_SECONDS = 20;
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const createUserDataDeletion = require("./lib/user-data-deletion");
 
 const USER_DATA_MESSAGE = "The requested user data can be found below:";
 
 const toList = value => (value == null ? [] : [].concat(value).map(String));
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-module.exports = function({ bot, knex, config, commands, threads, formats }) {
+module.exports = function({ bot, knex, config, commands, threads, formats, wait }) {
   const roleIds = toList(config.dataRequestsRoleId);
   const channelIds = toList(config.dataRequestsChannelId);
   const logChannelId = config.dataRequestsLogChannelId;
@@ -31,6 +24,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
   const exportTracking = createExportTracking({ bot, knex, config });
   const userData = createUserData({ knex, config });
+  const userDeletion = createUserDataDeletion({ threads, userData, exportTracking, wait });
 
   const logAction = async text => {
     if (! logChannelId) return;
@@ -201,73 +195,67 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       return;
     }
 
-    // Tell the user and close their open threads first. Closing saves the thread's log, so the files
-    // to delete are only collected afterwards. This may delete the channel this command was run in.
-    let notified = true;
-    const failedCloseThreads = [];
-    for (const row of openThreads) {
-      const thread = await threads.findById(row.id);
-      if (! thread) continue;
+    const deletion = await userDeletion.run(userId, {
+      channelId: msg.channel.id,
+      say: text => msg.channel.createMessage(text),
+    });
+    const { counts: final, files, exports: exportOutcome, failedCloses } = deletion;
+    const closed = deletion.openThreadCount - failedCloses.length;
 
-      try {
-        await thread.sendSystemMessageToUser(USER_DELETION_NOTICE);
-      } catch (err) {
-        notified = false;
-        console.error(`[DataRequests] Could not notify user ${userId}: ${err.message}`);
-      }
-
-      if (row.channel_id === msg.channel.id) {
-        await msg.channel.createMessage(`This thread will be closed and deleted in ${CLOSE_DELAY_SECONDS} seconds.`).catch(() => {});
-        await sleep(CLOSE_DELAY_SECONDS * 1000);
-      }
-
-      try {
-        await thread.close(true);
-      } catch (err) {
-        failedCloseThreads.push(row);
-        console.error(`[DataRequests] Could not close thread ${row.id}: ${err.message}`);
-      }
+    // Each problem is worded once for the reply and once for the log channel
+    const problem = {};
+    if (failedCloses.length) {
+      const list = failedCloses.map(t => `#${t.thread_number} (<#${t.channel_id}>)`).join(", ");
+      problem.closes = {
+        reply: ` ${plural(failedCloses.length, "open thread")} could not be closed cleanly (their data was still deleted): ${list}. `
+          + `Their channels are still open, so delete them yourself. See the bot console.`,
+        log: `${plural(failedCloses.length, "thread")} could not be closed cleanly`,
+      };
+    }
+    if (exportOutcome.failed) {
+      problem.exportsFailed = {
+        reply: ` ${plural(exportOutcome.failed, "exported data message")} could not be deleted and stay recorded: `
+          + `run ${config.prefix}deleteuserdata ${userId} --confirm again to retry, see the bot console.`,
+        log: `${plural(exportOutcome.failed, "export message")} could not be deleted`,
+      };
+    }
+    if (exportOutcome.unchecked) {
+      problem.exportsUnchecked = {
+        reply: `\n${exportTracking.UNCHECKED_WARNING}`,
+        log: "exported data messages could not be checked",
+      };
+    }
+    if (! deletion.notified) problem.notNotified = { reply: " **The user could not be notified by DM.**" };
+    if (files.failed) {
+      problem.filesFailed = {
+        reply: ` ${plural(files.failed, "file")} could not be deleted, see the bot console.`,
+        log: `${plural(files.failed, "file")} could not be deleted`,
+      };
+    }
+    if (files.skipped) {
+      problem.filesSkipped = {
+        reply: ` ${plural(files.skipped, "file record")} could not be used, so those files were not deleted. Check and delete them yourself, see the bot console.`,
+        log: `${plural(files.skipped, "file")} skipped`,
+      };
     }
 
-    const finalCounts = await userData.counts(userId);
-    const { files, skipped: skippedFiles } = await userData.findFiles(userId);
-
-    await userData.removeRows(userId);
-
-    // Reads the exports again: the plugin may have recorded more since the count above
-    const exportResult = await exportTracking.deleteAll(userId);
-    const exportsUnchecked = exportCount.unchecked || exportResult.unchecked;
-
-    const { deleted: deletedFiles, failed: failedFiles } = await userData.removeFiles(files);
-
-    let text = `Deleted ${plural(finalCounts.threadCount, "thread")}, ${plural(finalCounts.messageCount, "message")}, `
-      + `${plural(finalCounts.noteCount, "note")} and ${plural(deletedFiles, "file")} for <@${userId}>.${keptText}`;
-    const failedCloses = failedCloseThreads.length;
-    const closed = openThreads.length - failedCloses;
-    if (closed) text += ` Closed ${plural(closed, "open thread")}.`;
-    if (failedCloses) {
-      const list = failedCloseThreads.map(t => `#${t.thread_number} (<#${t.channel_id}>)`).join(", ");
-      text += ` ${plural(failedCloses, "open thread")} could not be closed cleanly (their data was still deleted): ${list}. `
-        + `Their channels are still open, so delete them yourself. See the bot console.`;
-    }
-    if (exportResult.removed) text += ` Removed ${plural(exportResult.removed, "exported data message")} from Discord.`;
-    if (exportResult.failed) {
-      text += ` ${plural(exportResult.failed, "exported data message")} could not be deleted and stay recorded: `
-        + `run ${config.prefix}deleteuserdata ${userId} --confirm again to retry, see the bot console.`;
-    }
-    if (exportsUnchecked) text += `\n${exportTracking.UNCHECKED_WARNING}`;
-    if (! notified) text += " **The user could not be notified by DM.**";
-    if (failedFiles) text += ` ${plural(failedFiles, "file")} could not be deleted, see the bot console.`;
-    if (skippedFiles) text += ` ${plural(skippedFiles, "file record")} could not be used, so those files were not deleted. Check and delete them yourself, see the bot console.`;
+    const replyOf = key => (problem[key] ? problem[key].reply : "");
+    const text = `Deleted ${plural(final.threadCount, "thread")}, ${plural(final.messageCount, "message")}, `
+      + `${plural(final.noteCount, "note")} and ${plural(files.deleted, "file")} for <@${userId}>.${keptText}`
+      + (closed ? ` Closed ${plural(closed, "open thread")}.` : "")
+      + replyOf("closes")
+      + (exportOutcome.removed ? ` Removed ${plural(exportOutcome.removed, "exported data message")} from Discord.` : "")
+      + replyOf("exportsFailed")
+      + replyOf("exportsUnchecked")
+      + replyOf("notNotified")
+      + replyOf("filesFailed")
+      + replyOf("filesSkipped");
 
     // If the command was run in a thread that has now been closed, its channel is gone
     await msg.channel.createMessage(text).catch(() => console.log(`[DataRequests] ${text}`));
-    const problems = [];
-    if (failedFiles) problems.push(`${plural(failedFiles, "file")} could not be deleted`);
-    if (skippedFiles) problems.push(`${plural(skippedFiles, "file")} skipped`);
-    if (exportResult.failed) problems.push(`${plural(exportResult.failed, "export message")} could not be deleted`);
-    if (exportsUnchecked) problems.push("exported data messages could not be checked");
-    if (failedCloses) problems.push(`${plural(failedCloses, "thread")} could not be closed cleanly`);
-    await logAction(`Data deletion: User <@${userId}> data deleted${problems.length ? ` (${problems.join(", ")})` : "."}`);
+    const logged = ["filesFailed", "filesSkipped", "exportsFailed", "exportsUnchecked", "closes"]
+      .filter(key => problem[key])
+      .map(key => problem[key].log);
+    await logAction(`Data deletion: User <@${userId}> data deleted${logged.length ? ` (${logged.join(", ")})` : "."}`);
   });
 };
