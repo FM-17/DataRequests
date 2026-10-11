@@ -21,6 +21,7 @@ Restart the bot. It installs the plugin from GitHub on start-up.
 - `!deleteuserdata [userId]`: reports what would be deleted and deletes nothing. Run `!deleteuserdata [userId] --confirm` to delete.
   - Deleted: all of the user's threads, their messages, their notes, and the files on disk that belong to those threads (saved log files, and local attachments when `attachmentStorage = local`).
   - Open and suspended threads, including the one the request came in on, are not kept. Confirming messages the user that their data is being deleted, including this conversation, which will be closed, then closes the thread and deletes the data.
+  - Also deleted: the export messages the bot posted for this user with `!getuserdata` and `!senduserdata` in the server. The copy DMed to the user is never deleted. The plugin keeps a small table, `data_request_exports`, of their channel and message ids (not the data) to find them. Any it fails to delete stay recorded: run the command again to retry.
   - Kept: the block record, so a blocked user stays blocked.
 
 ## Configuration
@@ -41,6 +42,8 @@ When both a role and a channel are set, both must match.
 
 - Attachments stored on Discord (`attachmentStorage = discord`) or linked from Discord's CDN (`original`) cannot be removed by the plugin.
 - The "Modmail thread #N with ... was closed" messages the bot posted in `logChannelId` are not deleted. They still show the user's name and id, but the log links in them stop working once the thread's data is deleted.
+
+- Exports made before the plugin tracked them, and copies someone downloaded or saved, cannot be deleted. If the bot says an export "could not be tracked", delete that message yourself.
 
 ## Tools Used
 

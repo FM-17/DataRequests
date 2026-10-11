@@ -18,6 +18,18 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const USER_DATA_MESSAGE = "The requested user data can be found below:";
 
+// Where the plugin remembers the Discord messages it posted containing a user's exported data
+const EXPORTS_TABLE = "data_request_exports";
+
+// Discord says the message or its channel no longer exists: the export is already gone
+const DISCORD_UNKNOWN_CHANNEL = 10003;
+const DISCORD_UNKNOWN_MESSAGE = 10008;
+const isAlreadyGone = err => err && (
+  err.code === DISCORD_UNKNOWN_CHANNEL
+  || err.code === DISCORD_UNKNOWN_MESSAGE
+  || (err.res && err.res.statusCode === 404)
+);
+
 const isInside = (dir, filePath) => {
   const rel = path.relative(path.resolve(dir), path.resolve(filePath));
   return rel !== "" && ! rel.startsWith("..") && ! path.isAbsolute(rel);
@@ -75,6 +87,88 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
   };
 
+  // The plugin's own table, created on first load. It never touches the bot's tables.
+  const exportsReady = (async () => {
+    try {
+      if (! await knex.schema.hasTable(EXPORTS_TABLE)) {
+        await knex.schema.createTable(EXPORTS_TABLE, table => {
+          table.increments("id");
+          table.string("user_id", 20).notNullable().index();
+          table.string("channel_id", 20).notNullable();
+          table.string("message_id", 20).notNullable();
+          table.string("created_at", 32).notNullable();
+        });
+      }
+      return true;
+    } catch (err) {
+      console.error(`[DataRequests] Could not prepare the ${EXPORTS_TABLE} table, exports will not be tracked: ${err.message}`);
+      return false;
+    }
+  })();
+
+  // Remembers an exported-data message so deleteuserdata can remove it. Returns whether it was recorded.
+  const recordExport = async (userId, channelId, message) => {
+    try {
+      if (! await exportsReady || ! message || ! message.id || ! channelId) return false;
+      await knex(EXPORTS_TABLE).insert({
+        user_id: userId,
+        channel_id: String(channelId),
+        message_id: String(message.id),
+        created_at: new Date().toISOString(),
+      });
+      return true;
+    } catch (err) {
+      console.error(`[DataRequests] Could not record export message: ${err.message}`);
+      return false;
+    }
+  };
+
+  // Posts a follow-up when an export could not be tracked, so the operator knows to delete it by hand
+  const warnIfUntracked = async (channel, recorded) => {
+    if (recorded) return;
+    await channel.createMessage(
+      `⚠ This export could not be tracked, so ${config.prefix}deleteuserdata will not remove it. Delete the message yourself when it is no longer needed.`,
+    ).catch(() => {});
+  };
+
+  // Rows for the user's exports. An unreadable table counts as none.
+  const listExports = async userId => {
+    try {
+      if (! await exportsReady) return [];
+      return await knex(EXPORTS_TABLE).where("user_id", userId).select("id", "channel_id", "message_id");
+    } catch (err) {
+      console.error(`[DataRequests] Could not read ${EXPORTS_TABLE}: ${err.message}`);
+      return [];
+    }
+  };
+
+  // Deletes each exported message. Rows are removed only once the message is confirmed gone,
+  // so failures stay recorded and a later !deleteuserdata run retries them.
+  const deleteExports = async rows => {
+    let removed = 0;
+    let failed = 0;
+    for (const row of rows) {
+      try {
+        await bot.deleteMessage(row.channel_id, row.message_id);
+      } catch (err) {
+        if (! isAlreadyGone(err)) {
+          failed++;
+          console.error(`[DataRequests] Could not delete export message ${row.message_id}: ${err.message}`);
+          continue;
+        }
+      }
+
+      try {
+        await knex(EXPORTS_TABLE).where("id", row.id).delete();
+        removed++;
+      } catch (err) {
+        failed++;
+        console.error(`[DataRequests] Deleted export message ${row.message_id} but could not remove its record: ${err.message}`);
+      }
+    }
+    return { removed, failed };
+  };
+
   // All commands take an optional user id. In a modmail thread it defaults to the thread's user.
   const addCommand = (name, options, run) => {
     commands.addInboxServerCommand(name, "[userId:userId]", async (msg, args, thread) => {
@@ -127,11 +221,12 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       return;
     }
 
-    await sendFile(
+    const sent = await sendFile(
       msg.channel,
       `Modmail data for <@${userId}> (${plural(threadCount, "thread")}):`,
       { file: text, name: `userdata-${userId}.txt` },
     );
+    await warnIfUntracked(msg.channel, await recordExport(userId, msg.channel.id, sent));
     await logAction(`Data request: User <@${userId}> data requested.`);
   });
 
@@ -161,7 +256,9 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
 
     // Show the operator what was sent, like !reply does
-    await sendFile(msg.channel, `**Sent to <@${userId}>:** ${USER_DATA_MESSAGE}`, dataFile());
+    // Only the operator's copy is tracked. The DM copy belongs to the user and is never deleted by the plugin.
+    const echo = await sendFile(msg.channel, `**Sent to <@${userId}>:** ${USER_DATA_MESSAGE}`, dataFile());
+    await warnIfUntracked(msg.channel, await recordExport(userId, msg.channel.id, echo));
     await logAction(`Data sent: User <@${userId}> data sent.`);
   });
 
@@ -237,7 +334,9 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   // Without --confirm, only reports what would be deleted
   addCommand("deleteuserdata", [{ name: "confirm", isSwitch: true }], async (msg, userId, args) => {
     const counts = await countUserData(userId);
-    if (counts.threadCount === 0 && counts.noteCount === 0) {
+    const exportRows = await listExports(userId);
+
+    if (counts.threadCount === 0 && counts.noteCount === 0 && exportRows.length === 0) {
       await msg.channel.createMessage(`There is no modmail data or notes to delete for <@${userId}>`);
       return;
     }
@@ -252,6 +351,10 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     if (! args.confirm) {
       let text = `Would delete ${plural(counts.threadCount, "thread")}, ${plural(counts.messageCount, "message")} `
         + `and ${plural(counts.noteCount, "note")} for <@${userId}>.${keptText}`;
+
+      if (exportRows.length) {
+        text += `\nAlso deletes ${plural(exportRows.length, "exported data message")} this bot posted in the server.`;
+      }
 
       if (openThreads.length) {
         const list = openThreads
@@ -303,6 +406,9 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       await trx("notes").where("user_id", userId).delete();
     });
 
+    // Re-read the rows: the plugin may have recorded more since the dry run
+    const exportResult = await deleteExports(await listExports(userId));
+
     const results = [];
     for (const file of files) results.push(await deleteFile(file));
     const deletedFiles = results.filter(r => r === "deleted").length;
@@ -313,6 +419,11 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     const closed = openThreads.length - failedCloses;
     if (closed) text += ` Closed ${plural(closed, "open thread")}.`;
     if (failedCloses) text += ` ${plural(failedCloses, "open thread")} could not be closed cleanly (their data was still deleted), see the bot console.`;
+    if (exportResult.removed) text += ` Removed ${plural(exportResult.removed, "exported data message")} from Discord.`;
+    if (exportResult.failed) {
+      text += ` ${plural(exportResult.failed, "exported data message")} could not be deleted and stay recorded: `
+        + `run ${config.prefix}deleteuserdata ${userId} --confirm again to retry, see the bot console.`;
+    }
     if (! notified) text += " **The user could not be notified by DM.**";
     if (failedFiles) text += ` ${plural(failedFiles, "file")} could not be deleted, see the bot console.`;
 
@@ -320,6 +431,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     await msg.channel.createMessage(text).catch(() => console.log(`[DataRequests] ${text}`));
     const problems = [];
     if (failedFiles) problems.push(`${plural(failedFiles, "file")} could not be deleted`);
+    if (exportResult.failed) problems.push(`${plural(exportResult.failed, "export message")} could not be deleted`);
     if (failedCloses) problems.push(`${plural(failedCloses, "thread")} could not be closed cleanly`);
     await logAction(`Data deletion: User <@${userId}> data deleted${problems.length ? ` (${problems.join(", ")})` : "."}`);
   });
