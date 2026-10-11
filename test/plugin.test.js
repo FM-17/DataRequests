@@ -44,6 +44,16 @@ test("deleteuserdata keeps the record of an export it could not delete", withEnv
   assert.match(lastReply(env), /--confirm again to retry/);
 }));
 
+test("deleteuserdata reports an export as failed when Discord deleted it but its record could not be removed", withEnv({
+  tables: { data_request_exports: [{ id: 1, user_id: USER, channel_id: "a", message_id: "m1" }] },
+  knexOptions: { failDeletes: ["data_request_exports"] },
+}, async env => {
+  await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+  assert.equal(env.knex.tables.data_request_exports.length, 1);
+  assert.match(lastReply(env), /1 exported data message could not be deleted and stay recorded/);
+}));
+
 test("deleteuserdata only touches the exports of the requested user", withEnv({
   tables: { data_request_exports: [
     { id: 1, user_id: USER, channel_id: "a", message_id: "m1" },

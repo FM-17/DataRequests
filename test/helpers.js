@@ -5,7 +5,7 @@ const path = require("path");
 const plugin = require("../index");
 
 // A tiny in-memory stand-in for knex. It supports only the calls the plugin makes.
-function createFakeKnex(initialTables = {}, { failReads = [], failHasTable = false } = {}) {
+function createFakeKnex(initialTables = {}, { failReads = [], failDeletes = [], failHasTable = false } = {}) {
   const tables = {};
   for (const [name, rows] of Object.entries(initialTables)) tables[name] = rows.map(r => ({ ...r }));
   let nextId = 1000;
@@ -19,6 +19,7 @@ function createFakeKnex(initialTables = {}, { failReads = [], failHasTable = fal
     const matches = row => filters.every(f => f(row));
     const run = () => {
       if (failReads.includes(tableName) && mode !== "delete") throw new Error(`cannot read ${tableName}`);
+      if (failDeletes.includes(tableName) && mode === "delete") throw new Error(`cannot delete from ${tableName}`);
       const rows = tables[tableName] || [];
       const found = rows.filter(matches);
       if (mode === "delete") {
