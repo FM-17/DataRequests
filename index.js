@@ -35,13 +35,14 @@ const isInside = (dir, filePath) => {
   return rel !== "" && ! rel.startsWith("..") && ! path.isAbsolute(rel);
 };
 
+// Returns undefined when the text can't be parsed, so callers can tell that apart from an empty value
 const safeParse = (value, label) => {
   if (typeof value !== "string") return value;
   try {
     return JSON.parse(value);
   } catch (err) {
     console.warn(`[DataRequests] Skipping unparseable ${label}: ${err.message}`);
-    return null;
+    return undefined;
   }
 };
 
@@ -305,17 +306,22 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
   };
 
-  // Files on disk that belong to the user's threads: saved log files and local attachments
+  // Files on disk that belong to the user's threads: saved log files and local attachments.
+  // `skipped` counts files that may exist but were left alone (unreadable records or unsafe paths).
   const findFilesToDelete = async userId => {
     const files = [];
+    let skipped = 0;
 
     const threadRows = await userThreads(knex, userId).select("log_storage_data");
     for (const row of threadRows) {
       const data = safeParse(row.log_storage_data, "log_storage_data");
-      if (data && typeof data.fullPath === "string") {
+      if (data === undefined) {
+        skipped++;
+      } else if (data && typeof data.fullPath === "string") {
         if (isInside(getLogDir(), data.fullPath)) {
           files.push(data.fullPath);
         } else {
+          skipped++;
           console.warn(`[DataRequests] Not deleting log file outside the log directory: ${data.fullPath}`);
         }
       }
@@ -329,18 +335,26 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
       for (const row of messageRows) {
         const urls = safeParse(row.attachments, "attachments");
-        if (! Array.isArray(urls)) continue;
+        if (! Array.isArray(urls)) {
+          skipped++;
+          continue;
+        }
         for (const url of urls) {
           if (typeof url !== "string") continue;
           const match = url.split(/[?#]/)[0].match(LOCAL_ATTACHMENT_URL);
           if (! match) continue;
           const filePath = path.join(getAttachmentDir(), match[1]);
-          if (isInside(getAttachmentDir(), filePath)) files.push(filePath);
+          if (isInside(getAttachmentDir(), filePath)) {
+            files.push(filePath);
+          } else {
+            skipped++;
+            console.warn(`[DataRequests] Not deleting attachment outside the attachment directory: ${filePath}`);
+          }
         }
       }
     }
 
-    return files;
+    return { files, skipped };
   };
 
   const countUserData = async userId => ({
@@ -423,7 +437,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
 
     const finalCounts = await countUserData(userId);
-    const files = await findFilesToDelete(userId);
+    const { files, skipped: skippedFiles } = await findFilesToDelete(userId);
 
     await knex.transaction(async trx => {
       await trx("thread_messages").whereIn("thread_id", userThreadIds(trx, userId)).delete();
@@ -454,11 +468,13 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     if (exportsUnchecked) text += `\n${EXPORTS_UNCHECKED_WARNING}`;
     if (! notified) text += " **The user could not be notified by DM.**";
     if (failedFiles) text += ` ${plural(failedFiles, "file")} could not be deleted, see the bot console.`;
+    if (skippedFiles) text += ` ${plural(skippedFiles, "file record")} could not be used, so those files were not deleted. Check and delete them yourself, see the bot console.`;
 
     // If the command was run in a thread that has now been closed, its channel is gone
     await msg.channel.createMessage(text).catch(() => console.log(`[DataRequests] ${text}`));
     const problems = [];
     if (failedFiles) problems.push(`${plural(failedFiles, "file")} could not be deleted`);
+    if (skippedFiles) problems.push(`${plural(skippedFiles, "file")} skipped`);
     if (exportResult.failed) problems.push(`${plural(exportResult.failed, "export message")} could not be deleted`);
     if (exportsUnchecked) problems.push("exported data messages could not be checked");
     if (failedCloses) problems.push(`${plural(failedCloses, "thread")} could not be closed cleanly`);
