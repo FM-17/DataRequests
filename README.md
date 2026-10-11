@@ -42,7 +42,6 @@ When both a role and a channel are set, both must match.
 
 - Attachments stored on Discord (`attachmentStorage = discord`) or linked from Discord's CDN (`original`) cannot be removed by the plugin.
 - The "Modmail thread #N with ... was closed" messages the bot posted in `logChannelId` are not deleted. They still show the user's name and id, but the log links in them stop working once the thread's data is deleted.
-
 - Exports made before the plugin tracked them, and copies someone downloaded or saved, cannot be deleted. If the bot says an export "could not be tracked", delete that message yourself.
 
 ## Tools Used
