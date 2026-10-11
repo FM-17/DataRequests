@@ -263,14 +263,18 @@ test("deleteuserdata run inside the thread being closed posts a notice and waits
   const events = [];
   const env = setup({
     tables: { threads: [{ id: "t1", user_id: USER, status: 1, thread_number: 7, channel_id: "ops-channel" }] },
-    threadsById: { t1: { sendSystemMessageToUser: async () => {}, close: async () => { events.push("closed"); } } },
+    threadsById: { t1: {
+      sendSystemMessageToUser: async text => { events.push(text.startsWith("Processing") ? "processing" : "deleted-notice"); },
+      close: async () => { events.push("closed"); },
+    } },
     wait: async seconds => { waits.push(seconds); events.push("waited"); },
   });
   try {
     await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
 
     assert.deepEqual(waits, [20]);
-    assert.deepEqual(events, ["waited", "closed"]);
+    // The deletion notice is sent only after the wait, right before the thread closes
+    assert.deepEqual(events, ["processing", "waited", "deleted-notice", "closed"]);
     assert.equal(env.replies[0].content, "This thread will be closed and deleted in 20 seconds.");
   } finally {
     env.cleanup();
