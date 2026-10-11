@@ -411,7 +411,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     // Tell the user and close their open threads first. Closing saves the thread's log, so the files
     // to delete are only collected afterwards. This may delete the channel this command was run in.
     let notified = true;
-    let failedCloses = 0;
+    const failedCloseThreads = [];
     for (const row of openThreads) {
       const thread = await threads.findById(row.id);
       if (! thread) continue;
@@ -431,7 +431,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       try {
         await thread.close(true);
       } catch (err) {
-        failedCloses++;
+        failedCloseThreads.push(row);
         console.error(`[DataRequests] Could not close thread ${row.id}: ${err.message}`);
       }
     }
@@ -457,9 +457,14 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
     let text = `Deleted ${plural(finalCounts.threadCount, "thread")}, ${plural(finalCounts.messageCount, "message")}, `
       + `${plural(finalCounts.noteCount, "note")} and ${plural(deletedFiles, "file")} for <@${userId}>.${keptText}`;
+    const failedCloses = failedCloseThreads.length;
     const closed = openThreads.length - failedCloses;
     if (closed) text += ` Closed ${plural(closed, "open thread")}.`;
-    if (failedCloses) text += ` ${plural(failedCloses, "open thread")} could not be closed cleanly (their data was still deleted), see the bot console.`;
+    if (failedCloses) {
+      const list = failedCloseThreads.map(t => `#${t.thread_number} (<#${t.channel_id}>)`).join(", ");
+      text += ` ${plural(failedCloses, "open thread")} could not be closed cleanly (their data was still deleted): ${list}. `
+        + `Their channels are still open, so delete them yourself. See the bot console.`;
+    }
     if (exportResult.removed) text += ` Removed ${plural(exportResult.removed, "exported data message")} from Discord.`;
     if (exportResult.failed) {
       text += ` ${plural(exportResult.failed, "exported data message")} could not be deleted and stay recorded: `
