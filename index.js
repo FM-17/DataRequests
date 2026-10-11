@@ -61,6 +61,20 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     }
   };
 
+  // Sends a message with a file, turning Discord's upload-size rejection into a clear error
+  const sendFile = async (channel, content, file) => {
+    try {
+      return await channel.createMessage(content, file);
+    } catch (err) {
+      if (err.code === 40005 || /too large/i.test(err.message || "")) {
+        const tooLarge = new Error("The data file is too large for Discord to upload. Ask the bot host to export it from the database.");
+        tooLarge.isTooLarge = true;
+        throw tooLarge;
+      }
+      throw err;
+    }
+  };
+
   // All commands take an optional user id. In a modmail thread it defaults to the thread's user.
   const addCommand = (name, options, run) => {
     commands.addInboxServerCommand(name, "[userId:userId]", async (msg, args, thread) => {
@@ -113,7 +127,8 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       return;
     }
 
-    await msg.channel.createMessage(
+    await sendFile(
+      msg.channel,
       `Modmail data for <@${userId}> (${plural(threadCount, "thread")}):`,
       { file: text, name: `userdata-${userId}.txt` },
     );
@@ -132,15 +147,21 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
     const dataFile = () => ({ file: text, name: `userdata-${userId}.txt` });
 
+    let dmChannel;
     try {
-      const dmChannel = await bot.getDMChannel(userId);
-      await dmChannel.createMessage(USER_DATA_MESSAGE, dataFile());
+      dmChannel = await bot.getDMChannel(userId);
     } catch (err) {
       throw new Error("Could not DM the user. They may have blocked the bot or closed their DMs.");
     }
+    try {
+      await sendFile(dmChannel, USER_DATA_MESSAGE, dataFile());
+    } catch (err) {
+      if (err.isTooLarge) throw err;
+      throw new Error(`Could not DM the user (${err.message}). They may have blocked the bot or closed their DMs.`);
+    }
 
     // Show the operator what was sent, like !reply does
-    await msg.channel.createMessage(`**Sent to <@${userId}>:** ${USER_DATA_MESSAGE}`, dataFile());
+    await sendFile(msg.channel, `**Sent to <@${userId}>:** ${USER_DATA_MESSAGE}`, dataFile());
     await logAction(`Data sent: User <@${userId}> data sent.`);
   });
 
