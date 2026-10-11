@@ -18,6 +18,21 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const USER_DATA_MESSAGE = "The requested user data can be found below:";
 
+const isInside = (dir, filePath) => {
+  const rel = path.relative(path.resolve(dir), path.resolve(filePath));
+  return rel !== "" && ! rel.startsWith("..") && ! path.isAbsolute(rel);
+};
+
+const safeParse = (value, label) => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    console.warn(`[DataRequests] Skipping unparseable ${label}: ${err.message}`);
+    return null;
+  }
+};
+
 const toList = value => (value == null ? [] : [].concat(value).map(String));
 const toInt = value => parseInt(value, 10) || 0;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -77,12 +92,16 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     const logs = [];
     for (const row of rows) {
       const thread = await threads.findById(row.id);
+      if (! thread) {
+        console.warn(`[DataRequests] Thread ${row.id} not found, skipping`);
+        continue;
+      }
       const threadMessages = await thread.getThreadMessages();
       const result = await formats.formatters.formatLog(thread, threadMessages, { simple: true });
       logs.push(result.content);
     }
 
-    return { threadCount: rows.length, text: logs.join("\n\n") };
+    return { threadCount: logs.length, text: logs.join("\n\n") };
   };
 
   // !getuserdata [userId]
@@ -128,6 +147,13 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   const getAttachmentDir = () => config.attachmentDir
     || path.resolve(path.dirname(require.main.filename), "..", "attachments");
 
+  // Log files only exist with logStorage = "attachment". The bot writes them to logOptions.attachmentDirectory
+  // (default "logs", relative to the working directory). `config.logDir` is only for legacy migration.
+  const getLogDir = () => path.resolve(
+    process.cwd(),
+    (config.logOptions && config.logOptions.attachmentDirectory) || "logs",
+  );
+
   const deleteFile = async filePath => {
     try {
       await fs.promises.unlink(filePath);
@@ -145,8 +171,14 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
 
     const threadRows = await userThreads(knex, userId).select("log_storage_data");
     for (const row of threadRows) {
-      const data = typeof row.log_storage_data === "string" ? JSON.parse(row.log_storage_data) : row.log_storage_data;
-      if (data && data.fullPath) files.push(data.fullPath);
+      const data = safeParse(row.log_storage_data, "log_storage_data");
+      if (data && typeof data.fullPath === "string") {
+        if (isInside(getLogDir(), data.fullPath)) {
+          files.push(data.fullPath);
+        } else {
+          console.warn(`[DataRequests] Not deleting log file outside the log directory: ${data.fullPath}`);
+        }
+      }
     }
 
     if (config.attachmentStorage === "local") {
@@ -156,9 +188,14 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
         .select("attachments");
 
       for (const row of messageRows) {
-        for (const url of JSON.parse(row.attachments)) {
+        const urls = safeParse(row.attachments, "attachments");
+        if (! Array.isArray(urls)) continue;
+        for (const url of urls) {
+          if (typeof url !== "string") continue;
           const match = url.split(/[?#]/)[0].match(LOCAL_ATTACHMENT_URL);
-          if (match) files.push(path.join(getAttachmentDir(), match[1]));
+          if (! match) continue;
+          const filePath = path.join(getAttachmentDir(), match[1]);
+          if (isInside(getAttachmentDir(), filePath)) files.push(filePath);
         }
       }
     }
