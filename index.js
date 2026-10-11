@@ -131,16 +131,21 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     ).catch(() => {});
   };
 
-  // Rows for the user's exports. An unreadable table counts as none.
+  // Rows for the user's exports. `ok` is false when the table could not be read, so callers can warn
+  // instead of treating it as "no exports".
   const listExports = async userId => {
     try {
-      if (! await exportsReady) return [];
-      return await knex(EXPORTS_TABLE).where("user_id", userId).select("id", "channel_id", "message_id");
+      if (! await exportsReady) return { rows: [], ok: false };
+      const rows = await knex(EXPORTS_TABLE).where("user_id", userId).select("id", "channel_id", "message_id");
+      return { rows, ok: true };
     } catch (err) {
       console.error(`[DataRequests] Could not read ${EXPORTS_TABLE}: ${err.message}`);
-      return [];
+      return { rows: [], ok: false };
     }
   };
+
+  const EXPORTS_UNCHECKED_WARNING = "⚠ Could not check for exported data messages, so any the bot posted in the server "
+    + "will not be deleted. Delete them yourself.";
 
   // Deletes each exported message. Rows are removed only once the message is confirmed gone,
   // so failures stay recorded and a later !deleteuserdata run retries them.
@@ -351,10 +356,12 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   // Without --confirm, only reports what would be deleted
   addCommand("deleteuserdata", [{ name: "confirm", isSwitch: true }], async (msg, userId, args) => {
     const counts = await countUserData(userId);
-    const exportRows = await listExports(userId);
+    const { rows: exportRows, ok: exportsChecked } = await listExports(userId);
 
     if (counts.threadCount === 0 && counts.noteCount === 0 && exportRows.length === 0) {
-      await msg.channel.createMessage(`There is no modmail data or notes to delete for <@${userId}>`);
+      let text = `There is no modmail data or notes to delete for <@${userId}>`;
+      if (! exportsChecked) text += `\n${EXPORTS_UNCHECKED_WARNING}`;
+      await msg.channel.createMessage(text);
       return;
     }
 
@@ -372,6 +379,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       if (exportRows.length) {
         text += `\nAlso deletes ${plural(exportRows.length, "exported data message")} this bot posted in the server.`;
       }
+      if (! exportsChecked) text += `\n${EXPORTS_UNCHECKED_WARNING}`;
 
       if (openThreads.length) {
         const list = openThreads
@@ -424,7 +432,9 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     });
 
     // Re-read the rows: the plugin may have recorded more since the dry run
-    const exportResult = await deleteExports(await listExports(userId));
+    const { rows: latestExportRows, ok: exportsStillChecked } = await listExports(userId);
+    const exportResult = await deleteExports(latestExportRows);
+    const exportsUnchecked = ! exportsChecked || ! exportsStillChecked;
 
     const results = [];
     for (const file of files) results.push(await deleteFile(file));
@@ -441,6 +451,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
       text += ` ${plural(exportResult.failed, "exported data message")} could not be deleted and stay recorded: `
         + `run ${config.prefix}deleteuserdata ${userId} --confirm again to retry, see the bot console.`;
     }
+    if (exportsUnchecked) text += `\n${EXPORTS_UNCHECKED_WARNING}`;
     if (! notified) text += " **The user could not be notified by DM.**";
     if (failedFiles) text += ` ${plural(failedFiles, "file")} could not be deleted, see the bot console.`;
 
@@ -449,6 +460,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
     const problems = [];
     if (failedFiles) problems.push(`${plural(failedFiles, "file")} could not be deleted`);
     if (exportResult.failed) problems.push(`${plural(exportResult.failed, "export message")} could not be deleted`);
+    if (exportsUnchecked) problems.push("exported data messages could not be checked");
     if (failedCloses) problems.push(`${plural(failedCloses, "thread")} could not be closed cleanly`);
     await logAction(`Data deletion: User <@${userId}> data deleted${problems.length ? ` (${problems.join(", ")})` : "."}`);
   });
