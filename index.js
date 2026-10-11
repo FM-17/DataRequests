@@ -193,6 +193,22 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
   const userThreads = (db, userId) => db("threads").where("user_id", userId);
   const userThreadIds = (db, userId) => userThreads(db, userId).select("id");
 
+  // The user is allowed to see staff replies, but not who sent the anonymous ones.
+  // The log already prints "(Anonymous) <role>:" for these, so only the sender name needs a neutral value.
+  // Works on the in-memory copies fetched for this export only, nothing is written back to the database.
+  const ANONYMOUS_STAFF_NAME = "Staff";
+  const hideAnonymousStaff = message => {
+    try {
+      if (! message) return;
+      if (message.is_anonymous) message.user_name = ANONYMOUS_STAFF_NAME;
+      // Edited/deleted reply entries quote the original reply, which carries the sender's name
+      const original = message.metadata && message.metadata.originalThreadMessage;
+      if (original && original.is_anonymous) original.user_name = ANONYMOUS_STAFF_NAME;
+    } catch (err) {
+      console.warn(`[DataRequests] Could not anonymize a message: ${err.message}`);
+    }
+  };
+
   // The user's data as the text of a `loglink -s` style log: only messages to and from the user, no mod chatter
   const buildUserData = async userId => {
     const rows = await userThreads(knex, userId).orderBy("created_at", "ASC").select("id");
@@ -205,6 +221,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats }) {
         continue;
       }
       const threadMessages = await thread.getThreadMessages();
+      threadMessages.forEach(hideAnonymousStaff);
       const result = await formats.formatters.formatLog(thread, threadMessages, { simple: true });
       logs.push(result.content);
     }
