@@ -247,3 +247,29 @@ test("deleteuserdata reports threads it closed", withEnv({
 
   assert.match(lastReply(env), /Closed 1 open thread/);
 }));
+
+test("deleteuserdata does not collect attachments unless attachment storage is local", withEnv({
+  config: { attachmentStorage: "discord" },
+}, async env => {
+  const file = path.join(env.attachmentDir, "123");
+  fs.writeFileSync(file, "file");
+  env.knex.tables.threads = [closedThread("t1")];
+  env.knex.tables.thread_messages = [
+    { thread_id: "t1", attachments: JSON.stringify(["http://bot/attachments/123/pic.png"]) },
+  ];
+
+  await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+  assert.equal(fs.existsSync(file), true);
+  assert.match(lastReply(env), /and 0 files/);
+}));
+
+test("deleteuserdata counts a file that is already gone as missing, not failed", withEnv({}, async env => {
+  const gone = path.join(env.logDir, "gone.txt");
+  env.knex.tables.threads = [closedThread("t1", { log_storage_data: JSON.stringify({ fullPath: gone }) })];
+
+  await env.run("deleteuserdata", { confirm: true }, { user_id: USER });
+
+  assert.match(lastReply(env), /and 0 files/);
+  assert.doesNotMatch(lastReply(env), /could not be deleted/);
+}));
