@@ -47,6 +47,6 @@ When both a role and a channel are set, both must match.
 ## Tools Used
 
 - AI tooling was leveraged for the development of this plugin. 
-- [mattpocock/skills](https://github.com/mattpocock/skills) `grill-with-docs`: questions each design decision one at a time before coding, records the answers as the ADRs in `docs/adr/` and the terms in `GLOSSARY.md`. Helps track reasoning alongside code.
+- [mattpocock/skills](https://github.com/mattpocock/skills) [`grill-with-docs`](https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs): questions each design decision one at a time before coding, records the answers as the ADRs in `docs/adr/` and the terms in `GLOSSARY.md`. Helps track reasoning alongside code.
 - [mattpocock/skills](https://github.com/mattpocock/skills) [`code-review`](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md): reviews the changes since a chosen commit against the repo's documented standards and the originating spec.
 
