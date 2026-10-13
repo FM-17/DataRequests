@@ -49,7 +49,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats, wait 
     }
   };
 
-  // All commands take an optional user id. In a modmail thread it defaults to the thread's user.
+  // All commands take an optional user ID. In a modmail thread it defaults to the thread's user.
   const addCommand = (name, options, run) => {
     commands.addInboxServerCommand(name, "[userId:userId]", async (msg, args, thread) => {
       if (! isAllowed(msg)) return;
@@ -57,7 +57,7 @@ module.exports = function({ bot, knex, config, commands, threads, formats, wait 
       try {
         const userId = args.userId || (thread && thread.user_id);
         if (! userId) {
-          await msg.channel.createMessage(`⚠ Specify a user id, or run ${config.prefix}${name} in a modmail thread`);
+          await msg.channel.createMessage(`⚠ Specify a user ID, or run ${config.prefix}${name} in a modmail thread`);
           return;
         }
 
