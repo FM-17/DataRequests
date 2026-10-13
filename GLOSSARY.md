@@ -1,6 +1,6 @@
 # Modmail data requests
 
-Lets staff fulfil a user's request to receive or delete the data the modmail bot holds about them.
+Lets staff fulfill a user's request to receive or delete the data the modmail bot holds about them.
 
 ## Language
 

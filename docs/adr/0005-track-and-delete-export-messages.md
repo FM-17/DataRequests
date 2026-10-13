@@ -1,6 +1,6 @@
 # Exported data messages are tracked and deleted with the user's data
 
-`!getuserdata` and `!senduserdata` post the user's data to Discord, so deleting it from the database would leave those copies behind. The plugin records each such message (the channel and message id, never the data) in its own table, `data_request_exports`, created on first load, and `!deleteuserdata --confirm` deletes them. Only the copies posted in the server are tracked. The copy DMed to the user by `!senduserdata` is theirs: it is neither recorded nor deleted.
+`!getuserdata` and `!senduserdata` post the user's data to Discord, so deleting it from the database would leave those copies behind. The plugin records each such message (the channel and message ID, never the data) in its own table, `data_request_exports`, created on first load, and `!deleteuserdata --confirm` deletes them. Only the copies posted in the server are tracked. The copy DMed to the user by `!senduserdata` is theirs: it is neither recorded nor deleted.
 
 Deliberately simple, to keep it hard to get wrong:
 

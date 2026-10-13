@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0004
+status: partially superseded by ADR-0004
 ---
 
 # Deletion keeps open threads and the block record

@@ -29,7 +29,7 @@ The data is visible to staff who operate this modmail. It is sent through Discor
 * A block record is kept for as long as the user is blocked, including after a deletion request
 
 ## Data access and deletion requests
-To request a copy of your data, or for your data to be deleted, message this bot. Staff handle the request.
+To request a copy of your data, or for your data to be deleted, message this bot or send an email to <>
 
 A copy contains the messages to and from you in your modmail threads. Staff can send that file to you by direct message. The same file may also be posted in the staff server so the request can be carried out.
 

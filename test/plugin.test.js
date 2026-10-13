@@ -142,9 +142,7 @@ test("getuserdata explains when the file is too large for Discord", withEnv({
 
 // --- anonymous replies ---
 
-test("exported data hides who sent anonymous replies", withEnv({
-  tables: { threads: [closedThread("t1")] },
-}, async env => {
+test("exported data hides who sent anonymous replies", async () => {
   const anonymous = {
     is_anonymous: true,
     user_name: "Real Mod",
@@ -153,20 +151,20 @@ test("exported data hides who sent anonymous replies", withEnv({
   const named = { is_anonymous: false, user_name: "Other Mod" };
   const user = { is_anonymous: false, user_name: "The User" };
 
-  const env2 = setup({
+  const env = setup({
     tables: { threads: [closedThread("t1")] },
     threadsById: { t1: { id: "t1", getThreadMessages: async () => [anonymous, named, user] } },
   });
   try {
-    await env2.run("getuserdata", {}, { user_id: USER });
+    await env.run("getuserdata", {}, { user_id: USER });
     assert.equal(anonymous.user_name, "Staff");
     assert.equal(anonymous.metadata.originalThreadMessage.user_name, "Staff");
     assert.equal(named.user_name, "Other Mod");
     assert.equal(user.user_name, "The User");
   } finally {
-    env2.cleanup();
+    env.cleanup();
   }
-}));
+});
 
 test("a thread that cannot be found is left out of the export", withEnv({
   tables: { threads: [closedThread("t1"), closedThread("t2")] },

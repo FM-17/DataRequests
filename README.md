@@ -17,7 +17,7 @@ Restart the bot. It installs the plugin from GitHub on start-up.
 `<userId>` can be an id or a mention. It is optional: when a command is run in a modmail thread without one, it uses the thread's user.
 
 - `!getuserdata [userId]`: posts a `.txt` file with the user's modmail threads. It has the same content as `!loglink -s`: only messages to and from the user.
-- `!senduserdata [userId]`: sends that same file to the user by DM. 
+- `!senduserdata [userId]`: sends that same file to the user by DM.
 - `!deleteuserdata [userId]`: reports what would be deleted and deletes nothing. Run `!deleteuserdata [userId] --confirm` to delete.
   - Deleted: all of the user's threads, their messages, their notes, and the files on disk that belong to those threads (saved log files, and local attachments when `attachmentStorage = local`).
   - Open and suspended threads, including the one the request came in on, are not kept. Confirming messages the user that their data is being deleted, including this conversation, which will be closed, then closes the thread and deletes the data.
@@ -46,7 +46,7 @@ When both a role and a channel are set, both must match.
 
 ## Tools Used
 
-- AI tooling was leveraged for the development of this plugin. 
+- AI tooling was leveraged for the development of this plugin.
 - [mattpocock/skills](https://github.com/mattpocock/skills) [`grill-with-docs`](https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs): questions each design decision one at a time before coding, records the answers as the ADRs in `docs/adr/` and the terms in `GLOSSARY.md`. Helps track reasoning alongside code.
 - [mattpocock/skills](https://github.com/mattpocock/skills) [`code-review`](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md): reviews the changes since a chosen commit against the repo's documented standards and the originating spec.
 

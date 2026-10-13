@@ -14,4 +14,4 @@ The "thread was closed" messages the bot posted in its log channel are left alon
 
 ## Consequences
 
-If the command was run inside the thread being closed, the bot first tells the user "Processing request..." and waits 20 seconds so the operator can read the thread. Only then does it send the user the deletion notice, so the user can't reply to a thread that is about to go. Then its channel is deleted, so the final report can't be posted there and goes to the bot console instead.
+If the command was run inside the thread being closed, the bot first tells the user "Processing request...", tells the operator the thread will be closed and deleted in 20 seconds, and waits so the operator can read the thread. Only then does it send the user the deletion notice, so the user can't reply to a thread that is about to go. Then its channel is deleted, so the final report can't be posted there and goes to the bot console instead.
